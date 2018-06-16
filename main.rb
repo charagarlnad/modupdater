@@ -21,25 +21,41 @@ end
 
 fingerprint_root = URI('https://addons-v2.forgesvc.net//api/fingerprint')
 addon_root = URI('https://addons-v2.forgesvc.net/api/addon')
+
+# contains a hash of all the obtained hash info
+# we are not just attaching each of the infos directly to the mod hashes from up above because:
+# if 2 files that had the same fingerprint happened, the second would just be ignored by the api, breaking the index
+modhashes = {}
+Net::HTTP.start(fingerprint_root.host, fingerprint_root.port, use_ssl: true) do |http|
+  req = Net::HTTP::Post.new(fingerprint_root)
+  req['Content-Type'] = 'application/json'
+  req['AuthenticationToken'] = token
+  req.body = modlist.map { |mod| mod[:hash]}.to_s
+
+  # hashinfo is the specific info on the hash of the file
+  # hash -> fingerprint info
+  JSON.parse(http.request(req).body)['exactMatches'].each_with_index do |hashinfo, index|
+    modhashes[hashinfo['file']['packageFingerprint']] = hashinfo
+  end
+end
+
+# contains a hash of modid -> info, is a hash because of the same reason as the modhashes
+modinfos = {}
+Net::HTTP.start(addon_root.host, addon_root.port, use_ssl: true) do |http|
+  req = Net::HTTP::Post.new(addon_root)
+  req['Content-Type'] = 'application/json'
+  req['AuthenticationToken'] = token
+  req.body = modlist.map { |mod| modhashes[mod[:hash]]['id']}.to_s
+
+  # modinfo is the generic info on the curse API for the modid
+  JSON.parse(http.request(req).body).each_with_index do |modinfo, index|
+    modinfos[modinfo['id']] = modinfo
+  end
+end
+puts("\n\n\n\n\n\n")
+
 modlist.each do |mod|
-  Net::HTTP.start(fingerprint_root.host, fingerprint_root.port, use_ssl: true) do |http|
-    req = Net::HTTP::Post.new(fingerprint_root)
-    req['Content-Type'] = 'application/json'
-    req['AuthenticationToken'] = token
-    req.body = "[#{mod[:hash]}]"
-
-    mod[:curse] = JSON.parse(http.request(req).body)
-  end
-  puts mod[:curse]
-  puts("\n\n\n\n\n\n")
-  modid = mod[:curse]['exactMatches'].first['id']
-  Net::HTTP.start(addon_root.host, addon_root.port, use_ssl: true) do |http|
-    req = Net::HTTP::Post.new(addon_root)
-    req['Content-Type'] = 'application/json'
-    req['AuthenticationToken'] = token
-    req.body = "[#{modid}]"
-
-    mod[:mod] = JSON.parse(http.request(req).body)
-  end
-  puts mod[:mod]
+  puts modinfos[modhashes[mod[:hash]]['id']]['name'] + ' ' + mod[:file] + ' ' + modhashes[mod[:hash]]['file']['fileName'] + ' ' + modhashes[mod[:hash]]['id'].to_s
+  puts 'h'
+  puts("\n")
 end
