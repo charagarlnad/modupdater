@@ -23,7 +23,7 @@ end
 
 refresh_modlist(modlist)
 
-fingerprint_root = URI('https://addons-v2.forgesvc.net//api/fingerprint')
+fingerprint_root = URI('https://addons-v2.forgesvc.net/api/fingerprint')
 addon_root = URI('https://addons-v2.forgesvc.net/api/addon')
 
 # contains a hash of all the obtained hash info
@@ -41,17 +41,16 @@ Net::HTTP.start(fingerprint_root.host, fingerprint_root.port, use_ssl: true) do 
   JSON.parse(http.request(req).body)['exactMatches'].each do |hashinfo|
     modhashes[hashinfo['file']['packageFingerprint']] = hashinfo
   end
-end
 
-# remove invalid mods
-unknown_mods = []
-modlist.delete_if do |mod|
-  unknown_mods << mod[:file].sub(ROOT, '') unless modhashes[mod[:hash]]
-end
 
-# contains a hash of modid -> info, is a hash because of the same reason as the modhashes
-modinfos = {}
-Net::HTTP.start(addon_root.host, addon_root.port, use_ssl: true) do |http|
+  # remove invalid mods
+  unknown_mods = []
+  modlist.delete_if do |mod|
+    unknown_mods << mod[:file].sub(ROOT, '') unless modhashes[mod[:hash]]
+  end
+
+  # contains a hash of modid -> info, is a hash because of the same reason as the modhashes
+  modinfos = {}
   req = Net::HTTP::Post.new(addon_root)
   req['Content-Type'] = 'application/json'
   req['AuthenticationToken'] = token
@@ -61,42 +60,39 @@ Net::HTTP.start(addon_root.host, addon_root.port, use_ssl: true) do |http|
   JSON.parse(http.request(req).body).each do |modinfo|
     modinfos[modinfo['id']] = modinfo
   end
-end
 
-modlist.each do |mod|
-  mod_hash = modhashes[mod[:hash]]
-  mod_info = modinfos[modhashes[mod[:hash]]['id']]
-  # mod_hash['file']['gameVersion'] is a array while latestversionmod['gameVersion'] is a string wtf
-  latest_version_mod = mod_info['gameVersionLatestFiles'].detect { |latestversionmod| mod_hash['file']['gameVersion'].include? latestversionmod['gameVersion'] }
-  puts "#{mod[:file].sub(ROOT, '')} - "
-  if latest_version_mod['projectFileName'] != mod_hash['file']['fileName']
-    version_root = URI("https://addons-v2.forgesvc.net/api/addon/#{mod_hash['id']}/file/#{latest_version_mod['projectFileId']}")
-    download_url =
-      Net::HTTP.start(version_root.host, version_root.port, use_ssl: true) do |http|
-        req = Net::HTTP::Get.new(version_root)
-        req['Content-Type'] = 'application/json'
-        req['AuthenticationToken'] = token
-        # should probably do correct uri encoding but whatever lmfoa
-        JSON.parse(http.request(req).body)['downloadUrl'].gsub(' ', '%20')
+  modlist.each do |mod|
+    mod_hash = modhashes[mod[:hash]]
+    mod_info = modinfos[modhashes[mod[:hash]]['id']]
+    # mod_hash['file']['gameVersion'] is a array while latestversionmod['gameVersion'] is a string wtf
+    latest_version_mod = mod_info['gameVersionLatestFiles'].detect { |latestversionmod| mod_hash['file']['gameVersion'].include? latestversionmod['gameVersion'] }
+    puts "#{mod[:file].sub(ROOT, '')} - "
+    if latest_version_mod['projectFileName'] != mod_hash['file']['fileName']
+      req = Net::HTTP::Get.new(URI("https://addons-v2.forgesvc.net/api/addon/#{mod_hash['id']}/file/#{latest_version_mod['projectFileId']}"))
+      req['Content-Type'] = 'application/json'
+      req['AuthenticationToken'] = token
+      # should probably do correct uri encoding but whatever lmfoa
+      download_url = JSON.parse(http.request(req).body)['downloadUrl'].gsub(' ', '%20')
+
+      puts 'Mod is outdated, updating...'
+      File.open("#{ROOT}#{latest_version_mod['projectFileName']}", 'w') do |f|
+        r = Net::HTTP.get_response(URI(download_url))
+        r = Net::HTTP.get_response(URI.parse(r.header['location'])) if r.code == '302'
+        f.write(r.body)
       end
-    puts 'Mod is outdated, updating...'
-    File.open("#{ROOT}#{latest_version_mod['projectFileName']}", 'w') do |f|
-      r = Net::HTTP.get_response(URI(download_url))
-      r = Net::HTTP.get_response(URI.parse(r.header['location'])) if r.code == '302'
-      f.write(r.body)
+      File.delete(mod[:file])
+      puts 'Updated mod to latest version.'
+      sleep(0.5)
+    else
+      puts 'Mod is on latest version.'
     end
-    File.delete(mod[:file])
-    puts 'Updated mod to latest version.'
-    sleep(0.5)
-  else
-    puts 'Mod is on latest version.'
+    puts "\n"
+  rescue
+    puts "something broke lol, error from file: #{mod[:file]}"
   end
-  puts "\n"
-rescue
-  puts "something broke lol, error from file: #{mod[:file]}"
-end
 
-puts "Some mod files were unable to be identified and were not updated (do they exist on curseforge?): #{unknown_mods.join(' ')}" unless unknown_mods.empty?
+  puts "Some mod files were unable to be identified and were not updated (do they exist on curseforge?): #{unknown_mods.join(' ')}" unless unknown_mods.empty?
+end
 
 # Now the mod list is in a possibly broken state if we were to do anything else in the current runtime, so we would have to rerun filesystem fetching/hashing/getting mod info
 # so lol probably never gonna do that
