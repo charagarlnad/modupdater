@@ -7,15 +7,15 @@ require 'json'
 # no clue how to generate one with username/pass for now so just use fiddler or wireshark or something to intercept your token
 token = (YAML.load_file 'config.yaml')['token']
 
-puts('Please place this script in the root of your modpack, 1 level up from the mods folder. Press y if it is.')
-exit! unless gets.chomp.downcase == 'y'
-
-ROOT = 'mods/'.freeze
+puts('Please drag in or type in the directory of your mod folder (no need to escape whitespace) and then press enter.')
+# terrible hack because File.directory works fine with windows directories but not with Dir
+ROOT = gets.chomp.gsub('\\', '/').gsub('"', '') + '/'
 modlist = []
 
 def refresh_modlist(modlist)
   modlist.clear
   Dir["#{ROOT}*.jar"].each do |mod|
+    # oddly faster than tr???
     file = File.read(mod, File.size(mod)).gsub(9.chr, '').gsub(10.chr, '').gsub(13.chr, '').gsub(32.chr, '')
     modlist << { file: mod, hash: Digest::MurmurHash2.rawdigest(file, [1].pack('L')) }
   end
@@ -75,7 +75,10 @@ Net::HTTP.start(fingerprint_root.host, fingerprint_root.port, use_ssl: true) do 
       download_url = JSON.parse(http.request(req).body)['downloadUrl'].gsub(' ', '%20')
 
       puts 'Mod is outdated, updating...'
-      File.open("#{ROOT}#{latest_version_mod['projectFileName']}", 'w') do |f|
+      new_mod_filename = "#{ROOT}#{latest_version_mod['projectFileName']}"
+      # some mods dont end with jar for some reason lol
+      new_mod_filename << '.jar' unless new_mod_filename.end_with?('.jar')
+      File.open(new_mod_filename, 'w') do |f|
         r = Net::HTTP.get_response(URI(download_url))
         r = Net::HTTP.get_response(URI.parse(r.header['location'])) if r.code == '302'
         f.write(r.body)
