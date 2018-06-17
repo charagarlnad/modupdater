@@ -7,17 +7,23 @@ require 'json'
 # no clue how to generate one with username/pass for now so just use fiddler or wireshark or something to intercept your token
 token = (YAML.load_file 'config.yaml')['token']
 
-puts('Please place me in the root of your modpack, 1 level up from the mods folder.')
-root = 'mods/'
+puts('Please place this script in the root of your modpack, 1 level up from the mods folder. Press y if it is')
+unless gets.chomp.downcase == 'y'
+  exit!
+end
+
+ROOT = 'mods/'
 modlist = []
-Dir["#{root}*.jar"].each do |mod|
-  file = File.read(mod, File.size(mod)).gsub(9.chr, '').gsub(10.chr, '').gsub(13.chr, '').gsub(32.chr, '')
-  modlist << {file: mod, hash: Digest::MurmurHash2.rawdigest(file, [1].pack("L"))}
-  puts("Done hashing #{mod}")
+
+def refresh_modlist(modlist)
+  modlist.clear
+  Dir["#{ROOT}*.jar"].each do |mod|
+    file = File.read(mod, File.size(mod)).gsub(9.chr, '').gsub(10.chr, '').gsub(13.chr, '').gsub(32.chr, '')
+    modlist << {file: mod, hash: Digest::MurmurHash2.rawdigest(file, [1].pack("L"))}
+  end
 end
-modlist.each do |mod|
-  puts("File: #{mod[:file]}, Hash: #{mod[:hash]}")
-end
+
+refresh_modlist(modlist)
 
 fingerprint_root = URI('https://addons-v2.forgesvc.net//api/fingerprint')
 addon_root = URI('https://addons-v2.forgesvc.net/api/addon')
@@ -48,6 +54,7 @@ Net::HTTP.start(addon_root.host, addon_root.port, use_ssl: true) do |http|
   req.body = modlist.map { |mod| modhashes[mod[:hash]]['id']}.to_s
 
   # modinfo is the generic info on the curse API for the modid
+  puts http.request(req).body
   JSON.parse(http.request(req).body).each_with_index do |modinfo, index|
     modinfos[modinfo['id']] = modinfo
   end
@@ -55,7 +62,29 @@ end
 puts("\n\n\n\n\n\n")
 
 modlist.each do |mod|
-  puts modinfos[modhashes[mod[:hash]]['id']]['name'] + ' ' + mod[:file] + ' ' + modhashes[mod[:hash]]['file']['fileName'] + ' ' + modhashes[mod[:hash]]['id'].to_s
-  puts 'h'
-  puts("\n")
+  mod_hash = modhashes[mod[:hash]]
+  mod_info = modinfos[modhashes[mod[:hash]]['id']]
+  latest_version_mod = mod_info['gameVersionLatestFiles'].detect { |latestversionmod| latestversionmod['gameVersion'] == mod_hash['file']['gameVersion'].first }
+  puts mod_info['name'] + ' ' + mod[:file] + ' ' + mod_hash['file']['fileName'] + ' ' + mod_hash['id'].to_s
+  puts latest_version_mod
+  
+  if latest_version_mod['projectFileName'] != mod_hash['file']['fileName']
+    version_root = URI("https://addons-v2.forgesvc.net/api/addon/#{mod_hash['id']}/file/#{latest_version_mod['projectFileId']}")
+    download_url =
+      Net::HTTP.start(version_root.host, version_root.port, use_ssl: true) do |http|
+        req = Net::HTTP::Get.new(version_root)
+        req['Content-Type'] = 'application/json'
+        req['AuthenticationToken'] = token
+      
+        # modinfo is the generic info on the curse API for the modid
+        JSON.parse(http.request(req).body)['downloadUrl']
+      end
+    puts 'mod is outdated lmfoa'
+    puts "Latest download url: #{download_url}"
+  else
+    puts 'on latest version'
+  end
+  puts "\n"
+rescue
+  puts "something broke lol, error from file: #{mod[:file]}"
 end
