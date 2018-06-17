@@ -11,6 +11,7 @@ puts('Please place this script in the root of your modpack, 1 level up from the 
 unless gets.chomp.downcase == 'y'
   exit!
 end
+puts("\n")
 
 ROOT = 'mods/'
 modlist = []
@@ -45,26 +46,36 @@ Net::HTTP.start(fingerprint_root.host, fingerprint_root.port, use_ssl: true) do 
   end
 end
 
+# remove invalid mods
+modlist.map! do |mod|
+  if modhashes[mod[:hash]] == nil
+    puts "#{mod[:file]} is a invalid or unknown mod, and will be ignored."
+    nil
+  else
+    mod
+  end
+end
+modlist.compact!
+
 # contains a hash of modid -> info, is a hash because of the same reason as the modhashes
 modinfos = {}
 Net::HTTP.start(addon_root.host, addon_root.port, use_ssl: true) do |http|
   req = Net::HTTP::Post.new(addon_root)
   req['Content-Type'] = 'application/json'
   req['AuthenticationToken'] = token
-  req.body = modlist.map { |mod| modhashes[mod[:hash]]['id']}.to_s
+  req.body = modlist.map { |mod| modhashes[mod[:hash]]['id'] }.to_s
 
   # modinfo is the generic info on the curse API for the modid
-  puts http.request(req).body
   JSON.parse(http.request(req).body).each_with_index do |modinfo, index|
     modinfos[modinfo['id']] = modinfo
   end
 end
-puts("\n\n\n\n\n\n")
 
 modlist.each do |mod|
   mod_hash = modhashes[mod[:hash]]
   mod_info = modinfos[modhashes[mod[:hash]]['id']]
-  latest_version_mod = mod_info['gameVersionLatestFiles'].detect { |latestversionmod| latestversionmod['gameVersion'] == mod_hash['file']['gameVersion'].first }
+  # mod_hash['file']['gameVersion'] is a array while latestversionmod['gameVersion'] is a string wtf
+  latest_version_mod = mod_info['gameVersionLatestFiles'].detect { |latestversionmod| mod_hash['file']['gameVersion'].include? latestversionmod['gameVersion'] }
   puts mod_info['name'] + ' ' + mod[:file] + ' ' + mod_hash['file']['fileName'] + ' ' + mod_hash['id'].to_s
   puts latest_version_mod
   
@@ -75,16 +86,25 @@ modlist.each do |mod|
         req = Net::HTTP::Get.new(version_root)
         req['Content-Type'] = 'application/json'
         req['AuthenticationToken'] = token
-      
-        # modinfo is the generic info on the curse API for the modid
-        JSON.parse(http.request(req).body)['downloadUrl']
+        # should probably do correct uri encoding but whatever lmfoa
+        JSON.parse(http.request(req).body)['downloadUrl'].gsub(' ', '%20')
       end
-    puts 'mod is outdated lmfoa'
+    puts 'Mod is outdated.'
     puts "Latest download url: #{download_url}"
+    open("#{ROOT}#{latest_version_mod['projectFileName']}", "w") do |f|
+      r = Net::HTTP.get_response(URI(download_url))
+      r = Net::HTTP.get_response(URI.parse(r.header['location'])) if r.code == '302'
+      f.write(r.body)
+    end
+    File.delete(mod[:file])
+    puts "Downloaded latest version."
+    sleep(0.5)
   else
-    puts 'on latest version'
+    puts 'Mod is on latest version.'
   end
   puts "\n"
-rescue
+rescue 
   puts "something broke lol, error from file: #{mod[:file]}"
 end
+
+puts 'Updating complete!'
