@@ -10,14 +10,14 @@ token = (YAML.load_file 'config.yaml')['token']
 puts('Please place this script in the root of your modpack, 1 level up from the mods folder. Press y if it is.')
 exit! unless gets.chomp.downcase == 'y'
 
-ROOT = 'mods/'
+ROOT = 'mods/'.freeze
 modlist = []
 
 def refresh_modlist(modlist)
   modlist.clear
   Dir["#{ROOT}*.jar"].each do |mod|
     file = File.read(mod, File.size(mod)).gsub(9.chr, '').gsub(10.chr, '').gsub(13.chr, '').gsub(32.chr, '')
-    modlist << {file: mod, hash: Digest::MurmurHash2.rawdigest(file, [1].pack("L"))}
+    modlist << { file: mod, hash: Digest::MurmurHash2.rawdigest(file, [1].pack('L')) }
   end
 end
 
@@ -34,11 +34,11 @@ Net::HTTP.start(fingerprint_root.host, fingerprint_root.port, use_ssl: true) do 
   req = Net::HTTP::Post.new(fingerprint_root)
   req['Content-Type'] = 'application/json'
   req['AuthenticationToken'] = token
-  req.body = modlist.map { |mod| mod[:hash]}.to_s
+  req.body = modlist.map { |mod| mod[:hash] }.to_s
 
   # hashinfo is the specific info on the hash of the file
   # hash -> fingerprint info
-  JSON.parse(http.request(req).body)['exactMatches'].each_with_index do |hashinfo, index|
+  JSON.parse(http.request(req).body)['exactMatches'].each do |hashinfo|
     modhashes[hashinfo['file']['packageFingerprint']] = hashinfo
   end
 end
@@ -46,10 +46,7 @@ end
 # remove invalid mods
 unknown_mods = []
 modlist.delete_if do |mod|
-  if modhashes[mod[:hash]] == nil
-    unknown_mods << mod[:file].sub(ROOT, '')
-    true
-  end
+  unknown_mods << mod[:file].sub(ROOT, '') unless modhashes[mod[:hash]]
 end
 
 # contains a hash of modid -> info, is a hash because of the same reason as the modhashes
@@ -61,7 +58,7 @@ Net::HTTP.start(addon_root.host, addon_root.port, use_ssl: true) do |http|
   req.body = modlist.map { |mod| modhashes[mod[:hash]]['id'] }.to_s
 
   # modinfo is the generic info on the curse API for the modid
-  JSON.parse(http.request(req).body).each_with_index do |modinfo, index|
+  JSON.parse(http.request(req).body).each do |modinfo|
     modinfos[modinfo['id']] = modinfo
   end
 end
@@ -83,7 +80,7 @@ modlist.each do |mod|
         JSON.parse(http.request(req).body)['downloadUrl'].gsub(' ', '%20')
       end
     puts 'Mod is outdated, updating...'
-    open("#{ROOT}#{latest_version_mod['projectFileName']}", 'w') do |f|
+    File.open("#{ROOT}#{latest_version_mod['projectFileName']}", 'w') do |f|
       r = Net::HTTP.get_response(URI(download_url))
       r = Net::HTTP.get_response(URI.parse(r.header['location'])) if r.code == '302'
       f.write(r.body)
@@ -95,7 +92,7 @@ modlist.each do |mod|
     puts 'Mod is on latest version.'
   end
   puts "\n"
-rescue 
+rescue
   puts "something broke lol, error from file: #{mod[:file]}"
 end
 
@@ -103,6 +100,5 @@ puts "Some mod files were unable to be identified and were not updated (do they 
 
 # Now the mod list is in a possibly broken state if we were to do anything else in the current runtime, so we would have to rerun filesystem fetching/hashing/getting mod info
 # so lol probably never gonna do that
-
 
 puts 'Updating complete!'
